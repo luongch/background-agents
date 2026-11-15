@@ -246,7 +246,7 @@ Run `npm run format`, `npm run lint`, and `npm run typecheck` after all edits. T
 
 ## Verify
 
-In terminal 1, restart the agent with `AGENT_SETTLE_DELAY=20s npm run dev:agent`. Start checkout with `--fault feature`. Inngest should show observation, choice, action, and sleep steps. During a sleep, press Ctrl-C in terminal 1, then restart the agent there before the 20 seconds end. Leave checkout and Inngest running. The same run should continue from saved checkpoints. Return to plain `npm run dev:agent` after the drill.
+Temporarily add `AGENT_SETTLE_DELAY=20s` to `.env`, then in terminal 1 restart the agent with `npm run dev:agent`. Start checkout with `--fault feature`. Inngest should show observation, choice, action, and sleep steps. During a sleep, press Ctrl-C in terminal 1, then restart the agent there before the 20 seconds end. Leave checkout and Inngest running. The same run should continue from saved checkpoints. Remove the setting afterward; the normal delay is one second.
 
 ## Break it on purpose
 

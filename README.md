@@ -53,7 +53,7 @@ If a startup command reports that its port is in use, stop the earlier workshop 
 
 On macOS or Linux, `npm run stop` ends all workshop processes started from this repository, including the separate agent, checkout, and notes servers. Use it when you want every workshop port free again; keep using Ctrl-C in one terminal when a lesson asks you to restart only that process.
 
-For the durable-restart drill, start terminal 1 with `AGENT_SETTLE_DELAY=20s npm run dev:agent`. That gives you time to stop and restart only the agent while an Inngest sleep is pending. Use the plain command again afterward; the normal delay is one second.
+For the durable-restart drill, temporarily add `AGENT_SETTLE_DELAY=20s` to `.env`, then start terminal 1 with `npm run dev:agent`. That gives you time to stop and restart only the agent while an Inngest sleep is pending. Remove the setting afterward; the normal delay is one second.
 
 | Process | Command | Address |
 | --- | --- | --- |
