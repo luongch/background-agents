@@ -31,7 +31,8 @@ async function executeAction(
 
   //anytime an agent does something we want to go ahead and log that activity
   await logAgentActivity(environmentId, runId, 'act', `Calling ${name.replaceAll('_', ' ')}`, {
-    actionId, input,
+    actionId, 
+    input,
   })
 
   try {
@@ -62,7 +63,18 @@ async function executeAction(
 }
 
 export const incidentAgent = inngest.createFunction(
-  { id: 'incident-agent', name: 'Checkout incident agent', triggers: { event: 'incident/opened' } },
+  { id: 'incident-agent',
+    name: 'Checkout incident agent',
+    triggers: { event: 'incident/opened' },
+    retries: 2,
+    concurrency: {limit: 1, key: 'event.data.environmentalId'},
+    onFailure: async ({ error, event}) => {
+      const original = event.data.event as { data?: { runId?: string}}
+      if(original.data?.runId) {
+        await setRun(original.data.runId, 'failed', error.message)
+      }
+    }
+  },
   async ({ event, step }) => {
     const { environmentId, runId, instanceId } = event.data
     // One opaque checkpoint proves the loop, but hides where each effect happened.
@@ -112,9 +124,53 @@ export const incidentAgent = inngest.createFunction(
         return recordDecision(environmentId, runId, cycle, decision.action, decision.reason)
       })
 
-      if(decision.action === 'wait' || (decision.action === 'complete' && run.goalCondition)) {
-        await step.run(`wait-unavailable-${cycle}`, () => setRun(runId, 'escalated', 'Event wait is not built yet'))
-        return
+      if(decision.action === 'wait' || decision.action === 'request_help' || (decision.action === 'complete' && run.goalCondition)) {
+        //force it to keep going and ignore the complete because if it got to this part that means it got past the complete check we have at the beginning of the function
+        if (decision.action === 'complete') {
+          await step.run(`reject-completion-${cycle}`, () => {
+            return logAgentActivity(environmentId, runId, 'human', 'Completion blocked by configured goal condition')
+          })
+        }
+
+        if(decision.action === 'request_help') {
+          await step.run(`defer-help-${cycle}`, () => {
+            return logAgentActivity(environmentId, runId, 'human', 'Help is not ready yet', {
+              question: decision.detail
+            })
+          })
+        }
+
+        await step.run(`wait-status-${cycle}`, () => {
+          return setRun(runId, 'waiting', decision.action === 'request_help' ? 'Help is not added yet' : decision.action === 'wait' ? decision.reason : 'Recovery not added yet')
+        })
+
+        let check = 0; //check if we're able to keep going
+        //we don't really have to do this but he wanted to do this as a first example
+        while (true) {
+          const latest = await step.run(`read-event-sequence-${cycle}-${check}`, () => {
+            return getRun(runId)
+          })
+          if(['completed', 'failed','cancelled','escaplated', 'superseded'].includes(current.status)) {
+            return
+          }
+
+          //indicates that new events have occured since the workflow was last updated
+          if(latest.eventSequence > state.eventSequence) {
+            break;
+          }
+          check++
+          //we're getting so many events here I want to see what's next, is the idea here
+          await step.waitForEvent(`wait-for-service-${cycle}-${check}`, {
+            event: 'incident/updated',
+            if: `async.data.runId == "${runId}`,
+            timeout: '10s',
+
+
+          })
+
+        }
+        continue
+
       }
 
       if(decision.reason === 'complete') {
@@ -128,11 +184,11 @@ export const incidentAgent = inngest.createFunction(
         return {report}
       }
 
-      if(decision.action === 'request_help') {
-        await step.run(`help-unavailable-${cycle}`, ()=>{
-          return setRun(runId, 'escalated', 'Human help not created yet')
-        })
-      }
+      // if(decision.action === 'request_help') {
+      //   await step.run(`help-unavailable-${cycle}`, ()=>{
+      //     return setRun(runId, 'escalated', 'Human help not created yet')
+      //   })
+      // }
 
       // doesn't need to be in a step because we using it for logging and recording purposes only,
       //  even though it is not deterministic since it is random
@@ -163,7 +219,17 @@ export const incidentAgent = inngest.createFunction(
 
         continue
       }
+
+      await step.run(`settle-status-${cycle}`, () => {
+        return setRun(runId, 'waiting', 'Waiting briefly before observing the effect')
+      })
+
+      await step.sleep(`settle-${cycle}`, process.env.AGENT_SETTLE_DELAY ?? '1s')
     }
+
+    await step.run('stop-at-limit', () => {
+      return setRun(runId, 'escalated', 'Decision limit reached')
+    })
 
     
 
